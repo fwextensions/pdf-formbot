@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Output files
+results_*.csv
+results_*.json
+results_*.xlsx
+~*.xlsx
+
+# Input files
+*.txt
+!.env.example
+
+# TypeScript build output
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+.idea

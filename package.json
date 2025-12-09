@@ -1,0 +1,17 @@
+{
+  "name": "formbot",
+  "version": "1.0.0",
+  "description": "PDF form analyzer using Gemini AI",
+  "type": "module",
+  "scripts": {
+    "analyze": "node --env-file=.env --experimental-strip-types src/analyze.ts",
+    "test": "node --env-file=.env --experimental-strip-types src/analyze.ts --test"
+  },
+  "dependencies": {
+    "@google/genai": "^1.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "typescript": "^5.9.3"
+  }
+}
