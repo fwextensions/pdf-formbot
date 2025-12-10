@@ -16,6 +16,32 @@ import { readFileSync, writeFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
+// Logging system to capture console output
+const logBuffer: string[] = [];
+const originalLog = console.log;
+const originalError = console.error;
+
+function log(...args: any[]) {
+  const message = args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
+  logBuffer.push(message);
+  originalLog(...args);
+}
+
+function logError(...args: any[]) {
+  const message = args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
+  logBuffer.push(message);
+  originalError(...args);
+}
+
+// Replace console methods
+console.log = log;
+console.error = logError;
+
+function writeLogFile(outputPath: string): void {
+  writeFileSync(outputPath, logBuffer.join("\n"), "utf-8");
+  originalLog(`📄 Log written to: ${outputPath}`);
+}
+
 // Types
 interface FormAnalysis {
   url: string;
@@ -40,6 +66,9 @@ interface FormAnalysis {
   };
   sensitiveInfoSummary: string;
   confidence: number;
+  pageCount: number;
+  fileSizeKB: number;
+  processingTimeSec: number;
   notes: string;
   error?: string;
 }
@@ -105,6 +134,9 @@ Rate your confidence in this assessment from 0.0 to 1.0:
 - 0.5-0.6: Uncertain - edge case that could go either way
 - Below 0.5: Low confidence - document is unusual or hard to classify
 
+**Question 5: Document Metadata**
+Count the number of pages in this PDF document.
+
 **Respond in this exact JSON format:**
 \`\`\`json
 {
@@ -118,6 +150,7 @@ Rate your confidence in this assessment from 0.0 to 1.0:
     "criminalHistory": true/false
   },
   "confidence": <0.0 to 1.0>,
+  "pageCount": <number of pages>,
   "notes": "<brief description of what the document is and any relevant observations>"
 }
 \`\`\``;
@@ -142,8 +175,9 @@ class FormAnalyzer {
 
   /**
    * Download a PDF from URL and upload it to Gemini Files API
+   * Returns the uploaded File and the file size in KB
    */
-  private async uploadPdfFromUrl(url: string): Promise<File> {
+  private async uploadPdfFromUrl(url: string): Promise<{ file: File; fileSizeKB: number }> {
     console.log(`  📥 Downloading PDF from ${url}`);
 
     const response = await fetch(url, {
@@ -159,13 +193,14 @@ class FormAnalyzer {
     }
 
     const pdfBuffer = await response.arrayBuffer();
+    const fileSizeKB = Math.round(pdfBuffer.byteLength / 1024);
     const fileBlob = new Blob([pdfBuffer], { type: "application/pdf" });
 
     // Extract filename from URL for display
     const urlPath = new URL(url).pathname;
     const displayName = urlPath.split("/").pop() || "document.pdf";
 
-    console.log(`  📤 Uploading to Gemini (${(pdfBuffer.byteLength / 1024).toFixed(1)} KB)`);
+    console.log(`  📤 Uploading to Gemini (${fileSizeKB} KB)`);
 
     const file = await this.ai.files.upload({
       file: fileBlob,
@@ -186,13 +221,14 @@ class FormAnalyzer {
       throw new Error("Gemini file processing failed");
     }
 
-    return getFile;
+    return { file: getFile, fileSizeKB };
   }
 
   /**
    * Analyze a single PDF
    */
   async analyzePdf(url: string): Promise<FormAnalysis> {
+    const startTime = Date.now();
     const result: FormAnalysis = {
       url,
       isForm: "Error",
@@ -206,12 +242,16 @@ class FormAnalyzer {
       },
       sensitiveInfoSummary: "",
       confidence: 0,
+      pageCount: 0,
+      fileSizeKB: 0,
+      processingTimeSec: 0,
       notes: "",
     };
 
     try {
       // Upload the PDF
-      const file = await this.uploadPdfFromUrl(url);
+      const { file, fileSizeKB } = await this.uploadPdfFromUrl(url);
+      result.fileSizeKB = fileSizeKB;
 
       if (!file.uri || !file.mimeType) {
         throw new Error("File upload succeeded but missing URI or mimeType");
@@ -256,6 +296,7 @@ class FormAnalyzer {
       console.error(`  ❌ Error: ${result.error}`);
     }
 
+    result.processingTimeSec = Math.round((Date.now() - startTime) / 1000);
     return result;
   }
 
@@ -286,6 +327,7 @@ class FormAnalyzer {
       sensitiveInfoSummary:
         sensitiveItems.length > 0 ? sensitiveItems.join(", ") : "None",
       confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
+      pageCount: typeof parsed.pageCount === "number" ? parsed.pageCount : 0,
       notes: parsed.notes || "",
     };
   }
@@ -388,9 +430,9 @@ function readUrlsFromFile(filePath: string): string[] {
 }
 
 /**
- * Write results to CSV (Excel-compatible)
+ * Write results to CSV (Excel-compatible, matching Airtable columns)
  */
-function writeResultsCsv(results: FormAnalysis[], outputPath: string): void {
+function writeResultsCsv(results: FormAnalysis[], outputPath: string, modelName: string): void {
   // Helper to escape a CSV field (quotes fields containing commas, quotes, or newlines)
   const escapeField = (value: string): string => {
     if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
@@ -400,17 +442,24 @@ function writeResultsCsv(results: FormAnalysis[], outputPath: string): void {
   };
 
   const headers = [
-    "URL",
-    "Is Form",
-    "Form Type",
+    "url",
+    "Review: Is this a form",
+    "Reviewer: Form Type",
+    "Reviewer: Does this form ask for SSN, DL#, financial, health info or criminal history?",
+    "Reviewer: Revisit for further review (optional)",
+    "Reviewer: Notes (optional)",
+    "Review: Reviewed by",
+    // Additional metadata columns
     "Confidence",
+    "Page Count",
+    "File Size (KB)",
+    "Processing Time (sec)",
     "SSN",
     "Driver's License",
     "Financial",
     "Health",
     "Criminal History",
     "Sensitive Info Summary",
-    "Notes",
     "Error",
   ];
 
@@ -418,20 +467,28 @@ function writeResultsCsv(results: FormAnalysis[], outputPath: string): void {
     escapeField(r.url),
     r.isForm,
     r.formType,
+    r.sensitiveInfoSummary !== "None" ? "Yes" : "No",
+    r.confidence < 0.7 ? "checked" : "",
+    escapeField(r.notes || ""),
+    modelName,
+    // Additional metadata
     r.confidence.toFixed(2),
+    r.pageCount.toString(),
+    r.fileSizeKB.toString(),
+    r.processingTimeSec.toString(),
     r.sensitiveInfo.ssn ? "Yes" : "No",
     r.sensitiveInfo.driversLicense ? "Yes" : "No",
     r.sensitiveInfo.financial ? "Yes" : "No",
     r.sensitiveInfo.health ? "Yes" : "No",
     r.sensitiveInfo.criminalHistory ? "Yes" : "No",
     escapeField(r.sensitiveInfoSummary),
-    escapeField(r.notes || ""),
     escapeField(r.error || ""),
   ]);
 
   // Add UTF-8 BOM for Excel compatibility
   const BOM = "\ufeff";
-  const csv = BOM + [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+  const escapedHeaders = headers.map(escapeField);
+  const csv = BOM + [escapedHeaders.join(","), ...rows.map((row) => row.join(","))].join("\n");
 
   writeFileSync(outputPath, csv, "utf-8");
   console.log(`\n📄 Results written to: ${outputPath}`);
@@ -487,16 +544,18 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`🔍 Analyzing ${urls.length} PDF(s)...\n`);
+  console.log(`🔍 Analyzing ${urls.length} PDF(s)...`);
+  const modelName = "gemini-2.5-flash";
 
   const results = await analyzer.analyzeAll(urls);
 
-  // Generate output files
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  // Generate output files (use local time for filename)
+  const now = new Date();
+  const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}T${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const outputDir = resolve(__dirname, "..");
 
-  writeResultsCsv(results, resolve(outputDir, `results_${timestamp}.csv`));
+  writeResultsCsv(results, resolve(outputDir, `results_${timestamp}.csv`), modelName);
   writeResultsJson(results, resolve(outputDir, `results_${timestamp}.json`));
 
   // Print summary
@@ -514,6 +573,8 @@ async function main() {
       r.sensitiveInfo.criminalHistory
   );
   console.log(`   Forms with sensitive info: ${withSensitive.length}`);
+
+  writeLogFile(resolve(outputDir, `results_${timestamp}.txt`));
 }
 
 main().catch(console.error);
