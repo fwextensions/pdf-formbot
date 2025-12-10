@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "analyze": "node --env-file=.env --experimental-strip-types src/analyze.ts",
-    "test": "node --env-file=.env --experimental-strip-types src/analyze.ts --test"
+    "test": "node --env-file=.env --experimental-strip-types src/analyze.ts --test",
+    "eval": "node --env-file=.env --experimental-strip-types src/eval.ts"
   },
   "dependencies": {
-    "@google/genai": "^1.32.0"
+    "@google/genai": "^1.32.0",
+    "csv-parse": "^5.6.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.2",

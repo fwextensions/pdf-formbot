@@ -30,23 +30,47 @@ A simple TypeScript tool that uses **Gemini 2.5 Flash** to analyze PDF documents
 
 ## Usage
 
-### Analyze a single PDF URL:
-```bash
-GEMINI_API_KEY=your_key npm run analyze -- "https://example.com/form.pdf"
+Create a `.env` file with your API key:
+```
+GEMINI_API_KEY=your_api_key_here
 ```
 
-### Analyze PDFs from a CSV file:
+### Analyze a single PDF URL:
 ```bash
-GEMINI_API_KEY=your_key npm run analyze -- input.csv
+npm run analyze -- "https://example.com/form.pdf"
 ```
-The CSV can be any format - the script will extract all PDF URLs it finds.
+
+### Analyze PDFs from a file:
+```bash
+npm run analyze -- input.txt   # One URL per line
+npm run analyze -- input.csv   # Extracts PDF URLs from CSV
+```
 
 ### Test with sample PDFs:
 ```bash
-GEMINI_API_KEY=your_key npm run test
+npm run test
 ```
 
-> **Note:** This uses Node's native TypeScript support (`--experimental-strip-types`). Requires Node.js 22.6+.
+> **Note:** Uses Node's native TypeScript support (`--experimental-strip-types`). Requires Node.js 22.6+.
+
+## Evaluation Mode
+
+Compare LLM analysis against human reviewer data:
+
+```bash
+npm run eval -- eval.csv
+```
+
+The input CSV should have columns:
+- `url` - PDF URL
+- `Review: Is this a form` - Yes/No
+- `Reviewer: Form Type` - Fillable PDF, Non-Fillable PDF, etc.
+- `Reviewer: Does this form ask for SSN, DL#...` - sensitive info
+
+**Output:** `eval_results_<timestamp>.csv` with side-by-side comparison showing:
+- ✓/✗ indicators for each field match
+- Human vs LLM values for Is Form, Form Type, Sensitive Info
+- Summary statistics with match percentages
 
 ## Output
 

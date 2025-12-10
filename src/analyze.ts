@@ -22,7 +22,7 @@ interface FormAnalysis {
   isForm: "Yes" | "No" | "Error";
   formType:
   | "Fillable PDF"
-  | "Digital form"
+  | "Non-Fillable PDF"
   | "Google form"
   | "MS Office form"
   | "MS Word document"
@@ -39,6 +39,7 @@ interface FormAnalysis {
     criminalHistory: boolean;
   };
   sensitiveInfoSummary: string;
+  confidence: number;
   notes: string;
   error?: string;
 }
@@ -46,7 +47,7 @@ interface FormAnalysis {
 // Form types that match the reviewer UI
 const FORM_TYPES = [
   "Fillable PDF", // Interactive PDF with form fields
-  "Digital form", // Generic digital/web form
+  "Non-Fillable PDF", // Printable form to fill by hand
   "Google form",
   "MS Office form",
   "MS Word document",
@@ -59,34 +60,50 @@ const FORM_TYPES = [
 const ANALYSIS_PROMPT = `Analyze this PDF document and answer the following questions. Be thorough in your analysis.
 
 **Question 1: Is this a form?**
-A form is a document designed to collect information from a person. Look for:
-- Input fields, text boxes, or blank lines for writing
-- Checkboxes or radio buttons
-- Signature lines
-- Instructions to "fill in", "complete", or "submit"
-- Labeled fields like "Name:", "Address:", "Date:", etc.
+A form is a document whose PRIMARY PURPOSE is to collect information from a person who fills it out.
+
+CLASSIFY AS A FORM (Yes):
+- Documents with input fields, text boxes, or blank lines for writing responses
+- Documents with checkboxes or radio buttons for the user to select
+- Documents with signature lines
+- Documents with instructions to "fill in", "complete", or "submit"
+- Documents with labeled fields like "Name:", "Address:", "Date:", etc.
+
+DO NOT CLASSIFY AS A FORM (No):
+- Checklists or compliance guides (even if they have checkboxes for internal tracking)
+- Reports, handbooks, or manuals that happen to contain sample templates
+- Documents where less than 50% of the content is form fields
+- Informational brochures or reference materials
+- Budget documents, meeting minutes, or policy documents
 
 Answer: "Yes" or "No"
 
 **Question 2: If it IS a form, what type of form is it?**
 Choose the MOST appropriate type:
-- "Fillable PDF" - A PDF with interactive form fields that can be typed into directly in a PDF reader (look for blue-highlighted fields or AcroForm elements)
-- "Digital form" - A printable form designed to be filled by hand (has blank lines/boxes but no interactive fields)
-- "Google form" - A Google Forms web form
-- "MS Office form" - A Microsoft Office-based form (Word form with content controls, Excel form, etc.)
-- "MS Word document" - A Word document template meant to be edited
-- "Airtable form" - An Airtable-based form
-- "Phone" - Form that must be completed by phone call
-- "Email" - Form that must be completed and submitted via email
+- "Fillable PDF" - A PDF with interactive form fields that can be typed into directly in a PDF reader (look for blue-highlighted fields, text input boxes, or AcroForm elements)
+- "Non-Fillable PDF" - A printable PDF form designed to be filled by hand or printed (has blank lines/boxes but no interactive digital fields)
+- "Google Forms" - A Google Forms web form
+- "Microsoft Forms" - A Microsoft Forms web form
+- "Microsoft Word document" - A Word document template meant to be edited
+- "Form Assembly / Salesforce" - A form built using Salesforce or a related technology like Form Assembly
+- "Other" - A digital form using some other technology
 - "N/A" - Not a form
 
 **Question 3: Does this form ask for any sensitive information?**
-Check for each category (answer true/false for each):
-- SSN (Social Security Number): Look for "SSN", "Social Security", or 9-digit number fields (XXX-XX-XXXX format)
-- Driver's License Number: Look for "DL", "Driver's License", "License Number", state ID fields
-- Financial Information: Look for bank account numbers, routing numbers, income, salary, tax info, credit card numbers
-- Health/Medical Information: Look for medical history, diagnoses, medications, doctor information, insurance claims
-- Criminal History: Look for questions about arrests, convictions, criminal background
+Only mark TRUE if the form explicitly asks the USER to provide their own personal sensitive information (not just references to policies or other people's information):
+
+- SSN (Social Security Number): The form asks the user to write their own Social Security Number. Look for "SSN", "Social Security Number", or 9-digit number fields (XXX-XX-XXXX format).
+- Driver's License Number: The form asks for the user's own driver's license or state ID number. Look for "Driver's License", "DL#", "License Number", or state ID fields. (Note: Business license numbers do NOT count)
+- Financial Information: The form asks for personal financial details like bank account numbers, routing numbers, income amounts, salary, tax information, or credit card numbers.
+- Health/Medical Information: The form asks for personal medical history, diagnoses, medications, doctor information, disabilities, or insurance claims.
+- Criminal History: The form asks about personal arrests, convictions, or criminal background.
+
+**Question 4: Confidence Level**
+Rate your confidence in this assessment from 0.0 to 1.0:
+- 0.9-1.0: Very confident - document is clearly a form or clearly not a form
+- 0.7-0.8: Confident - some ambiguity but classification is likely correct
+- 0.5-0.6: Uncertain - edge case that could go either way
+- Below 0.5: Low confidence - document is unusual or hard to classify
 
 **Respond in this exact JSON format:**
 \`\`\`json
@@ -100,6 +117,7 @@ Check for each category (answer true/false for each):
     "health": true/false,
     "criminalHistory": true/false
   },
+  "confidence": <0.0 to 1.0>,
   "notes": "<brief description of what the document is and any relevant observations>"
 }
 \`\`\``;
@@ -187,6 +205,7 @@ class FormAnalyzer {
         criminalHistory: false,
       },
       sensitiveInfoSummary: "",
+      confidence: 0,
       notes: "",
     };
 
@@ -266,6 +285,7 @@ class FormAnalyzer {
       sensitiveInfo,
       sensitiveInfoSummary:
         sensitiveItems.length > 0 ? sensitiveItems.join(", ") : "None",
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
       notes: parsed.notes || "",
     };
   }
@@ -280,6 +300,8 @@ class FormAnalyzer {
 
     if (normalized.includes("fillable") && normalized.includes("pdf"))
       return "Fillable PDF";
+    if (normalized.includes("non-fillable") || normalized.includes("nonfillable"))
+      return "Non-Fillable PDF";
     if (normalized.includes("google")) return "Google form";
     if (normalized.includes("airtable")) return "Airtable form";
     if (normalized.includes("office") || normalized.includes("excel"))
@@ -288,11 +310,11 @@ class FormAnalyzer {
     if (normalized.includes("phone")) return "Phone";
     if (normalized.includes("email")) return "Email";
     if (normalized.includes("digital") || normalized.includes("printable"))
-      return "Digital form";
+      return "Non-Fillable PDF";
     if (normalized === "n/a" || normalized === "not a form") return "N/A";
 
     // If it's a PDF form but not fillable
-    if (normalized.includes("pdf")) return "Digital form";
+    if (normalized.includes("pdf")) return "Non-Fillable PDF";
 
     return "Unknown";
   }
@@ -381,8 +403,9 @@ function writeResultsCsv(results: FormAnalysis[], outputPath: string): void {
     "URL",
     "Is Form",
     "Form Type",
+    "Confidence",
     "SSN",
-    "DL#",
+    "Driver's License",
     "Financial",
     "Health",
     "Criminal History",
@@ -395,6 +418,7 @@ function writeResultsCsv(results: FormAnalysis[], outputPath: string): void {
     escapeField(r.url),
     r.isForm,
     r.formType,
+    r.confidence.toFixed(2),
     r.sensitiveInfo.ssn ? "Yes" : "No",
     r.sensitiveInfo.driversLicense ? "Yes" : "No",
     r.sensitiveInfo.financial ? "Yes" : "No",
