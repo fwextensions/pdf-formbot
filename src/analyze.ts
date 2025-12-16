@@ -1,3 +1,4 @@
+#!/usr/bin/env node --experimental-strip-types
 /**
  * PDF Form Analyzer using Gemini AI
  *
@@ -7,8 +8,13 @@
  * 3. Does it ask for sensitive info? (SSN, DL#, financial, health, criminal history)
  *
  * Usage:
- *   GEMINI_API_KEY=your_key npx tsx src/analyze.ts input.csv
- *   GEMINI_API_KEY=your_key npx tsx src/analyze.ts --test  # test with sample URLs
+ *   GEMINI_API_KEY=your_key npx github:sfds/pdf-formbot urls.txt      # one URL per line
+ *   GEMINI_API_KEY=your_key npx github:sfds/pdf-formbot input.csv     # extracts PDF URLs from CSV
+ *   GEMINI_API_KEY=your_key npx github:sfds/pdf-formbot https://example.com/form.pdf
+ *   GEMINI_API_KEY=your_key npx github:sfds/pdf-formbot --test
+ *
+ * Options:
+ *   --prompt <file>   Use a custom prompt from a text file
  */
 
 import { createPartFromUri, GoogleGenAI, type File } from "@google/genai";
@@ -163,9 +169,11 @@ const TEST_URLS = [
 class FormAnalyzer {
   private ai: GoogleGenAI;
   private model = "gemini-2.5-flash";
+  private prompt: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, customPrompt?: string) {
     this.ai = new GoogleGenAI({ apiKey });
+    this.prompt = customPrompt || ANALYSIS_PROMPT;
   }
 
   /**
@@ -259,7 +267,7 @@ class FormAnalyzer {
 
       const response = await this.ai.models.generateContent({
         model: this.model,
-        contents: [{ parts: [filePart, { text: ANALYSIS_PROMPT }] }],
+        contents: [{ parts: [filePart, { text: this.prompt }] }],
       });
 
       const text = response.text || "";
@@ -509,7 +517,21 @@ async function main() {
     process.exit(1);
   }
 
-  const analyzer = new FormAnalyzer(apiKey);
+  // Parse --prompt option
+  let customPrompt: string | undefined;
+  const promptIdx = args.indexOf("--prompt");
+  if (promptIdx !== -1 && args[promptIdx + 1]) {
+    const promptPath = resolve(args[promptIdx + 1]);
+    if (!existsSync(promptPath)) {
+      console.error(`❌ Error: Prompt file not found: ${promptPath}`);
+      process.exit(1);
+    }
+    customPrompt = readFileSync(promptPath, "utf-8");
+    console.log(`📝 Using custom prompt from: ${promptPath}\n`);
+    args.splice(promptIdx, 2);
+  }
+
+  const analyzer = new FormAnalyzer(apiKey, customPrompt);
 
   let urls: string[];
 
