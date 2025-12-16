@@ -45,7 +45,7 @@ function writeLogFile(outputPath: string): void {
 // Types
 interface FormAnalysis {
   url: string;
-  isForm: "Yes" | "No" | "Error";
+  isForm: "Yes" | "No" | "";
   formType:
   | "Fillable PDF"
   | "Non-Fillable PDF"
@@ -109,13 +109,8 @@ Answer: "Yes" or "No"
 
 **Question 2: If it IS a form, what type of form is it?**
 Choose the MOST appropriate type:
-- "Fillable PDF" - A PDF with interactive form fields that can be typed into directly in a PDF reader (look for blue-highlighted fields, text input boxes, or AcroForm elements)
-- "Non-Fillable PDF" - A printable PDF form designed to be filled by hand or printed (has blank lines/boxes but no interactive digital fields)
-- "Google Forms" - A Google Forms web form
-- "Microsoft Forms" - A Microsoft Forms web form
-- "Microsoft Word document" - A Word document template meant to be edited
-- "Form Assembly / Salesforce" - A form built using Salesforce or a related technology like Form Assembly
-- "Other" - A digital form using some other technology
+- "Fillable PDF" - A PDF with INTERACTIVE FORM FIELDS that can be typed into directly in a PDF reader (look for blue-highlighted fields, text input boxes, or AcroForm elements)
+- "Non-Fillable PDF" - A printable PDF form that MUST BE FILLED BY HAND on a printout (has blank lines/boxes but no interactive digital fields)
 - "N/A" - Not a form
 
 **Question 3: Does this form ask for any sensitive information?**
@@ -231,7 +226,7 @@ class FormAnalyzer {
     const startTime = Date.now();
     const result: FormAnalysis = {
       url,
-      isForm: "Error",
+      isForm: "",
       formType: "N/A",
       sensitiveInfo: {
         ssn: false,
