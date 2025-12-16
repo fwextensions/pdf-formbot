@@ -19,8 +19,7 @@
 
 import { createPartFromUri, GoogleGenAI, type File } from "@google/genai";
 import { readFileSync, writeFileSync, existsSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
+import { resolve } from "path";
 
 // Logging system to capture console output
 const logBuffer: string[] = [];
@@ -569,8 +568,7 @@ async function main() {
   // Generate output files (use local time for filename)
   const now = new Date();
   const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}T${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const outputDir = resolve(__dirname, "..");
+  const outputDir = process.cwd();
 
   writeResultsCsv(results, resolve(outputDir, `results_${timestamp}.csv`), modelName);
   writeResultsJson(results, resolve(outputDir, `results_${timestamp}.json`));
